@@ -1,0 +1,22 @@
+# Environment files (secrets — never commit these)
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# AWS key
+*.pem
+
+# OS/editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Streamlit
+.streamlit/
