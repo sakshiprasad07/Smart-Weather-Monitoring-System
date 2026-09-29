@@ -188,9 +188,10 @@ if fetch_clicked:
             with col2:
                 if len(history) >= 3:
                     df = pd.DataFrame(history)
+                    df["timestamp"] = pd.to_datetime(df["timestamp"]) + pd.Timedelta(hours=5, minutes=30)
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(x=df["timestamp"], y=df["value"], mode="lines+markers", name="Temperature"))
-                    fig.update_layout(title=f"Temperature trend — {city}", xaxis_title="Time", yaxis_title="°C", height=350)
+                    fig.update_layout(title=f"Temperature trend — {city} (IST)", xaxis_title="Time (IST)", yaxis_title="°C", height=350)
                     st.plotly_chart(fig, use_container_width=True)
 
                     try:
@@ -200,7 +201,9 @@ if fetch_clicked:
                         st.subheader("📈 Forecast (next 3 readings)")
                         fcols = st.columns(3)
                         for i, point in enumerate(forecast["forecast"]):
+                            pred_time_ist = pd.to_datetime(point["predicted_time"]) + pd.Timedelta(hours=5, minutes=30)
                             fcols[i].metric(f"Step +{point['step']}", f"{point['predicted_value']} °C")
+                            fcols[i].caption(pred_time_ist.strftime("%d %b, %I:%M %p") + " IST")
                         st.caption(f"Trend: **{forecast['summary']['trend']}** · Model: {forecast['model']}")
 
                         st.subheader("📊 Historical stats")

@@ -15,7 +15,7 @@ Design notes:
   swapped independently.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 import numpy as np
@@ -47,6 +47,7 @@ class ForecastRequest(BaseModel):
 class ForecastPoint(BaseModel):
     step: int
     predicted_value: float
+    predicted_time: str
 
 
 class ForecastResponse(BaseModel):
@@ -98,29 +99,54 @@ def forecast(req: ForecastRequest):
     try:
         # Sort defensively by timestamp in case the caller didn't.
         sorted_history = sorted(req.history, key=lambda r: r.timestamp)
-        X = np.arange(len(sorted_history)).reshape(-1, 1)
+
+        # Use REAL elapsed seconds since the first reading as the regression
+        # feature, instead of a plain position index. This means the model
+        # actually learns from the true time gaps between readings, rather
+        # than assuming every reading is evenly spaced.
+        timestamps = [datetime.fromisoformat(r.timestamp) for r in sorted_history]
+        t0 = timestamps[0]
+        elapsed_seconds = np.array([(t - t0).total_seconds() for t in timestamps])
+        X = elapsed_seconds.reshape(-1, 1)
         y = np.array([r.value for r in sorted_history])
 
         model = LinearRegression()
         model.fit(X, y)
 
-        future_idx = np.arange(len(sorted_history), len(sorted_history) + req.steps_ahead).reshape(-1, 1)
-        predictions = model.predict(future_idx)
+        # Estimate the typical interval between readings from the actual
+        # data, then project future points at that same spacing -- rather
+        # than a hardcoded "+1 step" that ignores real elapsed time.
+        if len(elapsed_seconds) > 1:
+            avg_interval = float(np.mean(np.diff(elapsed_seconds)))
+        else:
+            avg_interval = 60.0  # fallback, shouldn't happen given the >=3 check above
+        avg_interval = max(avg_interval, 1.0)  # guard against zero/negative gaps
+
+        last_elapsed = elapsed_seconds[-1]
+        future_elapsed = np.array(
+            [last_elapsed + avg_interval * (i + 1) for i in range(req.steps_ahead)]
+        ).reshape(-1, 1)
+        predictions = model.predict(future_elapsed)
 
         forecast_points = [
-            ForecastPoint(step=i + 1, predicted_value=round(float(p), 2))
+            ForecastPoint(
+                step=i + 1,
+                predicted_value=round(float(p), 2),
+                predicted_time=(t0 + timedelta(seconds=float(future_elapsed[i][0]))).isoformat(),
+            )
             for i, p in enumerate(predictions)
         ]
 
         return ForecastResponse(
             location=req.location,
             metric=req.metric,
-            model="LinearRegression (time-index based)",
+            model="LinearRegression (elapsed-time based)",
             training_points=len(sorted_history),
             forecast=forecast_points,
             summary={
                 "trend": "rising" if model.coef_[0] > 0 else "falling" if model.coef_[0] < 0 else "flat",
-                "slope_per_step": round(float(model.coef_[0]), 4),
+                "slope_per_second": round(float(model.coef_[0]), 6),
+                "avg_interval_seconds": round(avg_interval, 1),
             },
         )
     except Exception as exc:  # pragma: no cover - defensive
@@ -131,4 +157,3 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
-    
